@@ -1,0 +1,9 @@
+__pycache__/*
+
+server.crt
+server.key
+
+.cache/*
+
+cacerts
+truststore.jks
