@@ -1,7 +1,5 @@
 cryptography
 requests
 tqdm
-hashlib
-ipaddress
-fnmatch
-select
+filelock
+waitress

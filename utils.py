@@ -1,7 +1,15 @@
 import threading
+import time
 
 def get_current_thread_name():
     return threading.current_thread().name
 
-def log(message):
-    print(f"[{get_current_thread_name()}] [LOG] {message}")
+def log(message: str):
+    print(f"[{time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())}] [{get_current_thread_name()}] [LOG] {message}")
+
+def get_base_domain(domain: str):
+    """Extract base domain (second-level domain) from given domain"""
+    parts = domain.lower().split('.')
+    if len(parts) > 2:
+        return '.'.join(parts[-2:])
+    return domain
