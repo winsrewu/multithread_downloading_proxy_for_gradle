@@ -2,117 +2,222 @@ import hashlib
 from pathlib import Path
 import threading
 import time
+import traceback
+import shutil
+
+from filelock import FileLock
 
 from configs import *
 from utils import log
+from enum import Enum
 
-memory_cache = {}
-current_memory_size = 0
+# cache structure:
+#
+# .cache/{cache_key}/.meta
+# {id in hex} {file type id} {file name} {last hit timestamp} {size in bytes}
+#
+# .cache/{cache_key}/{file id in hex}
 
-def get_cache_key(url):
-    """生成URL的缓存键"""
-    return hashlib.sha256(url.encode()).hexdigest()
+# cache init
+Path(CACHE_DIR).mkdir(exist_ok=True)
 
-def check_disk_space():
+class CacheType(Enum):
+    WEB_FILE = 1
+    CERT = 2
+
+def _parse_cache_meta_line(line: str):
+    """解析元数据行"""
+    line_parts = line.strip().split(' ')
+    if len(line_parts) != 5:
+        raise ValueError("Invalid meta data line")
+    return {
+        'id': line_parts[0],
+        'type': CacheType(int(line_parts[1])),
+        'name': line_parts[2],
+        'last_hit': float(line_parts[3]),
+        'size': int(line_parts[4])
+    }
+
+def _parse_cache_meta(meta_str: str):
+    """解析元数据"""
+    l = []
+    for line in meta_str.split('\n'):
+        if line.strip() == "":
+            continue
+        l.append(_parse_cache_meta_line(line))
+    return l
+
+def _save_cache_meta(meta: list):
+    """保存元数据"""
+    return '\n'.join(f"{m['id']} {m['type'].value} {m['name']} {m['last_hit']} {m['size']}" for m in meta)
+
+def _get_available_cache_id(meta: list):
+    """获取可用缓存ID"""
+    used_ids = set(m['id'] for m in meta)
+    for i in range(16**16):
+        if str(i.to_bytes(2, 'big').hex()) not in used_ids:
+            return str(i.to_bytes(2, 'big').hex())
+    raise ValueError("No available cache id")
+
+def _get_cache_key(type: CacheType, name: str):
+    """生成缓存键"""
+    return hashlib.sha256((type.name + "#" + name).encode('utf-8')).hexdigest()
+
+def _check_disk_space():
     """检查磁盘空间是否充足"""
     if not Path(CACHE_DIR).exists():
         return True
     used = sum(f.stat().st_size for f in Path(CACHE_DIR).glob('*') if f.is_file())
     return used < DISK_CACHE_MAX_SIZE
+    
 
-def save_to_cache(url, data):
+def save_to_cache(type: CacheType, name: str, data: bytes):
     """保存数据到缓存系统"""
-    cache_key = get_cache_key(url)
-    
-    # 内存缓存
-    global current_memory_size
+    global with_cache
+    if (not with_cache) and type == CacheType.WEB_FILE:
+        return False
+
     data_size = len(data)
+    if data_size > DISK_CACHE_MAX_FILE_SIZE:
+        log(f"Jummping cache for file {name}: too large ({data_size / 1024 / 1024:.2f} MB)")
+        return False
     
-    if data_size <= MEMORY_CACHE_MAX_SIZE:
-        # 如果内存不足，清理最旧的缓存
-        while current_memory_size + data_size > MEMORY_CACHE_MAX_SIZE and memory_cache:
-            oldest_key = next(iter(memory_cache))
-            current_memory_size -= len(memory_cache[oldest_key])
-            del memory_cache[oldest_key]
-        
-        memory_cache[cache_key] = {
-            'data': data,
-            'timestamp': time.time(),
-            'size': data_size
-        }
-        current_memory_size += data_size
+    if data_size < DISK_CACHE_MIN_FILE_SIZE and type == CacheType.WEB_FILE:
+        log(f"Jummping cache for file {name}: too small ({data_size / 1024 / 1024:.2f} MB)")
+        return False
     
-    # 磁盘缓存 (大于1MB的文件)
-    if data_size > 1 * 1024 * 1024 and check_disk_space():
-        Path(CACHE_DIR).mkdir(exist_ok=True, parents=True)
-        cache_file = CACHE_DIR + "/" + cache_key
-        
-        try:
+    if not _check_disk_space():
+        log(f"Jummping cache for file {name}: no space left")
+        return False
+    
+    cache_key = _get_cache_key(type, name)
+    cache_dir = CACHE_DIR + "/" + cache_key
+    Path(cache_dir).mkdir(exist_ok=True)
+
+    meta_file = CACHE_DIR + "/" + cache_key + "/.meta"
+    if not Path(meta_file).exists():
+        with open(meta_file, 'w') as f:
+            f.write("")
+
+    locker = FileLock(meta_file + ".lock")
+    try:
+        with locker.acquire(timeout=10):
+            meta = None
+            with open(meta_file) as f:
+                meta = _parse_cache_meta(f.read())
+            for m in meta:
+                if m['name'] == name and m['type'] == type:
+                    log(f"Jummping cache for file {type.name}#{name}: already exist")
+                    return False
+            
+            cache_id = _get_available_cache_id(meta)
+            meta.append({
+                'id': cache_id,
+                'type': type,
+                'name': name,
+                'last_hit': time.time(),
+                'size': data_size
+            })
+            with open(meta_file, 'w') as f:
+                f.write(_save_cache_meta(meta))
+            
+            cache_file = cache_dir + "/" + cache_id
             with open(cache_file, 'wb') as f:
                 f.write(data)
-            # 记录元数据
-            with open(f"{cache_file}.meta", 'w') as f:
-                f.write(f"timestamp={time.time()}\nsize={data_size}\nurl={url}")
-        except Exception as e:
-            log(f"Failed to save disk cache: {e}")
-
-def get_from_cache(url):
-    """从缓存中获取数据"""
-    cache_key = get_cache_key(url)
-    now = time.time()
+            return True
+    except Exception as e:
+        log(f"Failed to check cache: {e}")
+        traceback.print_exc()
+        return False
     
-    # 检查内存缓存
-    if cache_key in memory_cache:
-        if now - memory_cache[cache_key]['timestamp'] <= CACHE_EXPIRE_SECONDS:
-            log("Cache hit (memory)")
-            return memory_cache[cache_key]['data']
-        else:
-            del memory_cache[cache_key]
+def get_path_from_cache(type: CacheType, name: str):
+    """从缓存中获取数据路径"""
+    cache_key = _get_cache_key(type, name)
+    cache_dir = CACHE_DIR + "/" + cache_key
+    if not Path(cache_dir).exists():
+        return None
     
-    # 检查磁盘缓存
-    cache_file = CACHE_DIR + "/" + cache_key
-    meta_file = CACHE_DIR + "/" + f"{cache_key}.meta"
+    meta_file = CACHE_DIR + "/" + cache_key + "/.meta"
+    if not Path(meta_file).exists():
+        return None
     
-    if Path(cache_file).exists() and Path(meta_file).exists():
-        try:
-            # 读取元数据
+    locker = FileLock(meta_file + ".lock")
+    try:
+        with locker.acquire(timeout=10):
+            meta = None
             with open(meta_file) as f:
-                meta = dict(line.strip().split('=') for line in f)
-            
-            if now - float(meta['timestamp']) <= CACHE_EXPIRE_SECONDS:
-                # 读取缓存数据
-                with open(cache_file, 'rb') as f:
-                    data = f.read()
-                log("Cache hit (disk)")
-                
-                # 提升到内存缓存
-                if len(data) <= MEMORY_CACHE_MAX_SIZE:
-                    save_to_cache(url, data)
-                
-                return data
-            else:
-                # 清理过期缓存
-                cache_file.unlink()
-                meta_file.unlink()
-        except Exception as e:
-            log(f"Cache read error: {e}")
-    
-    return None
+                meta = _parse_cache_meta(f.read())
+            for m in meta:
+                if m['name'] == name and m['type'] == type:
+                    cache_file = cache_dir + "/" + m['id']
+                    if not Path(cache_file).exists():
+                        raise ValueError("Cache file not found, but meta data exists")
+                    m['last_hit'] = time.time()
+                    with open(meta_file, 'w') as f:
+                        f.write(_save_cache_meta(meta))
 
-def clean_cache():
+                    log(f"Cache hit for file {type.name}#{name}: {m['size'] / 1024 / 1024:.2f} MB")
+                    return cache_file
+            return None
+    except Exception as e:
+        log(f"Failed to get cache path: {e}")
+        traceback.print_exc()
+        return None
+
+def get_from_cache(type: CacheType, name: str):
+    """从缓存中获取数据"""
+    path = get_path_from_cache(type, name)
+    if path is None:
+        return None
+    
+    locker = FileLock(path + ".lock")
+    try:
+        with locker.acquire(timeout=10):
+            with open(path, 'rb') as f:
+                return f.read()
+    except Exception as e:
+        log(f"Failed to get cache: {e}")
+        traceback.print_exc()
+        return None
+
+def _clean_cache():
     """定期清理过期缓存"""
     while True:
         time.sleep(3600)  # 每小时清理一次
         now = time.time()
-        for cache_file in Path(CACHE_DIR).glob('*.meta'):
+        log("Cleaning cache...")
+        for cache_key in os.listdir(CACHE_DIR):
+            meta_file = CACHE_DIR + "/" + cache_key + "/.meta"
+            if not Path(meta_file).exists():
+                shutil.rmtree(CACHE_DIR + "/" + cache_key, ignore_errors=True) # ignore errors
+                continue
+
+            locker = FileLock(meta_file + ".lock")
             try:
-                with open(cache_file) as f:
-                    meta = dict(line.strip().split('=') for line in f)
-                if now - float(meta['timestamp']) > CACHE_EXPIRE_SECONDS:
-                    cache_file.unlink()
-                    Path(str(cache_file)[:-5]).unlink()  # 删除对应的数据文件
-            except:
-                pass
+                with locker.acquire(timeout=10):
+                    meta = None
+                    with open(meta_file) as f:
+                        meta = _parse_cache_meta(f.read())
+
+                    expired_ids = [m['id'] for m in meta if m['last_hit'] + CACHE_EXPIRE_SECONDS < now]
+                    for expired_id in expired_ids:
+                        cache_file = CACHE_DIR + "/" + cache_key + "/" + expired_id
+                        if Path(cache_file).exists():
+                            os.remove(cache_file) # ignore errors
+                            log(f"Cleaned cache file {cache_file}")
+                        meta = [m for m in meta if m['id'] != expired_id]
+
+                    if len(meta) == 0:
+                        os.remove(meta_file) # ignore errors
+                        shutil.rmtree(CACHE_DIR + "/" + cache_key, ignore_errors=True) # ignore errors
+                        log(f"Cleaned cache directory {CACHE_DIR + '/' + cache_key}")
+                    else:
+                        with open(meta_file, 'w') as f:
+                            f.write(_save_cache_meta(meta))
+            except Exception as e:
+                log(f"Failed to clean cache: {e}")
+                traceback.print_exc()
+        log("Cleaning cache done")
 
 # 启动清理线程
-threading.Thread(target=clean_cache, daemon=True).start()
+threading.Thread(target=_clean_cache, daemon=True).start()
