@@ -7,11 +7,11 @@ import time
 
 from configs import *
 from utils import log
-from cache_handler import get_from_cache, save_to_cache
+from cache_handler import CacheType, get_from_cache, save_to_cache
 
-def improved_multi_thread_download(url):
+def improved_multi_thread_download(url: str, headers: dict, file_size: int):
     try:
-        cached_data = get_from_cache(url)
+        cached_data = get_from_cache(CacheType.WEB_FILE, url)
         if cached_data is not None:
             return cached_data
     except Exception as e:
@@ -20,9 +20,6 @@ def improved_multi_thread_download(url):
         raise
 
     try:
-        # 获取文件信息
-        response = requests.head(url, allow_redirects=True, timeout=(5, 10))  # 新增超时设置[[3]]
-        file_size = int(response.headers['Content-Length'])
         log(f"开始多线程下载 (总大小: {file_size/1024/1024:.2f}MB)")
 
         # 动态任务分配参数
@@ -42,10 +39,13 @@ def improved_multi_thread_download(url):
                 try:
                     start = chunk_id * chunk_size
                     end = min(start + chunk_size - 1, file_size - 1)
-                    headers = {'Range': f'bytes={start}-{end}'}
+                    headers["Range"] = f"bytes={start}-{end}"
+
+                    session = requests.Session()
+                    session.trust_env = DOWNLOADER_PROXIES
                     
                     # 设置连接超时和读取超时
-                    with requests.get(url, headers=headers, stream=True, timeout=(5, 30)) as r:
+                    with session.get(url, headers=headers, stream=True, timeout=(5, 30), proxies=DOWNLOADER_PROXIES, allow_redirects=True) as r:
                         r.raise_for_status()
                         chunk_data = r.content
                         
@@ -71,7 +71,7 @@ def improved_multi_thread_download(url):
                     break
 
         # 使用线程池动态分配任务
-        with ThreadPoolExecutor(max_workers=MAX_THREADS) as executor:
+        with ThreadPoolExecutor(max_workers=DOWNLOADER_MAX_THREADS) as executor:
             futures = [executor.submit(download_chunk, i) for i in range(total_chunks)]
             
             # 实时监控任务状态
@@ -83,7 +83,7 @@ def improved_multi_thread_download(url):
         progress_bar.close()
 
         result = bytes(buffer)
-        save_to_cache(url, result)
+        save_to_cache(CacheType.WEB_FILE, url, result)
         log("下载完成并已缓存")
         return result
 
