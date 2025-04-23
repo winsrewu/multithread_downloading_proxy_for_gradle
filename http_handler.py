@@ -11,55 +11,54 @@ from utils import log
 
 from downloader import improved_multi_thread_download
 
-def handle_common(client_socket, target_url):
+def handle_common(client_socket: socket.socket, target_url: str, headers: dict, method: str, is_ssl: bool):
     client_ip, client_port = client_socket.getpeername()
 
     try:
-        # 获取内容信息 (带重试机制)
         content_length = -1 # -1表示未知长度
-        for attempt in range(3):  # 最多重试3次
-            try:
-                with requests.head(target_url, allow_redirects=True, timeout=10) as head_response:
-                    content_length = int(head_response.headers.get('Content-Length', -1))
-                    if content_length != -1:
-                        log(f"Content size: {content_length/1024/1024:.2f}MB")
-                    else:
-                        log("Content size: unknown")
-                    break
-            except Exception as e:
-                if attempt == 2:  # 最后一次尝试失败
-                    log(f"Head request failed after 3 attempts: {e}")
-                    content_length = -1
-                continue
+        response_headers = {}
+        response = None
+
+        if method == "GET":
+            # 获取内容信息 (带重试机制)
+            for attempt in range(3):  # 最多重试3次
+                try:
+                    session = requests.Session()
+                    session.trust_env = DOWNLOADER_TRUST_ENV
+                    with session.request('HEAD', target_url, allow_redirects=True, timeout=10, headers=headers, proxies=DOWNLOADER_PROXIES) as head_response:
+                        content_length = int(head_response.headers.get('Content-Length', -1))
+                        response_headers = head_response.headers
+                        response = head_response
+                        if content_length != -1:
+                            log(f"Content size: {content_length/1024/1024:.2f}MB")
+                        else:
+                            log("Content size: unknown")
+                        break
+                except Exception as e:
+                    if attempt == 2:  # 最后一次尝试失败
+                        log(f"Head request failed after 3 attempts: {e}")
+                        content_length = -1
+                    continue
 
         # 选择下载方式并发送响应头
-        use_chunked = content_length > THRESHOLD
+        use_chunked = content_length > DOWNLOADER_MULTIPART_THRESHOLD
         if use_chunked:
             # 发送分块传输编码的响应头
-            response_headers = (
-                "HTTP/1.1 200 OK\r\n"
-                "Transfer-Encoding: chunked\r\n"
-                "Content-Type: application/octet-stream\r\n"
-                "Connection: keep-alive\r\n"
-                "Cache-Control: max-age=3600\r\n\r\n"
-            )
-            client_socket.sendall(response_headers.encode())
-        else:
+            response_headers["Transfer-Encoding"] = "chunked"
+            response_headers["Connection"] = "keep-alive"
+            response_headers_raw = f"HTTP/1.1 {response.status_code} {response.reason}\r\n"
+            for key, value in response_headers.items():
+                response_headers_raw += f"{key}: {value}\r\n"
+
+            client_socket.sendall(response_headers_raw.encode())
+        elif content_length != -1:
             # 发送固定长度的响应头
-            if content_length == -1:
-                response_headers = (
-                    f"HTTP/1.1 200 OK\r\n"
-                    f"Connection: keep-alive\r\n"
-                    f"Cache-Control: max-age=3600\r\n\r\n"
-                )
-            else:
-                response_headers = (
-                    f"HTTP/1.1 200 OK\r\n"
-                    f"Content-Length: {content_length}\r\n"
-                    f"Connection: keep-alive\r\n"
-                    f"Cache-Control: max-age=3600\r\n\r\n"
-                )
-            client_socket.sendall(response_headers.encode())
+            response_headers["Transfer-Encoding"] = "chunked"
+            response_headers_raw = f"HTTP/1.1 {response.status_code} {response.reason}\r\n"
+            for key, value in response_headers.items():
+                response_headers_raw += f"{key}: {value}\r\n"
+
+            client_socket.sendall(response_headers_raw.encode())
 
         # 发送响应体
         def safe_send(data):
@@ -73,7 +72,7 @@ def handle_common(client_socket, target_url):
         if use_chunked:
             log("Using multi-thread download for large file with chunked transfer")
             # 流式处理大文件
-            downloaded_bytes = BytesIO(improved_multi_thread_download(target_url))
+            downloaded_bytes = BytesIO(improved_multi_thread_download(target_url, headers=headers, method=method, file_size=content_length))
             downloaded_bytes.seek(0)
             
             with tqdm(total=content_length, unit='B', unit_scale=True, desc="Sending") as pbar:
@@ -98,8 +97,19 @@ def handle_common(client_socket, target_url):
 
         else:
             log("Downloading directly")
-            with requests.get(target_url, stream=True, timeout=30) as response:
+            session = requests.Session()
+            session.trust_env = DOWNLOADER_TRUST_ENV
+            with session.request(method, target_url, stream=True, timeout=30, headers=headers, proxies=DOWNLOADER_PROXIES, allow_redirects=True) as response:
                 response.raise_for_status()
+
+                if content_length == -1:
+                    response_headers["Transfer-Encoding"] = "chunked"
+                    response_headers_raw = f"HTTP/1.1 {response.status_code} {response.reason}\r\n"
+                    for key, value in response.headers.items():
+                        response_headers_raw += f"{key}: {value}\r\n"
+
+                    client_socket.sendall(response_headers_raw.encode())
+
                 with tqdm(total=content_length, unit='B', unit_scale=True, desc="Sending") as pbar:
                     for chunk in response.iter_content(chunk_size=16384):
                         if use_chunked:
@@ -114,6 +124,9 @@ def handle_common(client_socket, target_url):
             # 发送分块结束标记
             if use_chunked:
                 safe_send(b"0\r\n\r\n")
+
+        if is_ssl:
+            client_socket.unwrap()  # 关闭SSL连接
 
     except requests.exceptions.RequestException as e:
         log(f"Request error: {e}")
@@ -142,11 +155,10 @@ def handle_common(client_socket, target_url):
             pass
         
     finally:
-        # client_socket.unwrap()
         client_socket.close()
         log(f"Connection with {client_ip}:{client_port} closed")
 
-def handle_http(client_socket, url):
+def handle_http(client_socket: socket.socket, url: str, headers: dict, method: str, is_ssl: bool):
     # 设置socket超时和缓冲区
     client_socket.settimeout(30)  # 30秒操作超时
     client_socket.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 65536)  # 64KB发送缓冲区
@@ -154,15 +166,7 @@ def handle_http(client_socket, url):
 
     # 记录请求信息
     client_ip, client_port = client_socket.getpeername()
-    log(f"New HTTP request from {client_ip}:{client_port} for {url.geturl()}")
-
-    # 验证URL
-    if not url.netloc:
-        raise ValueError("Invalid URL: No host specified")
-    # 构建目标URL
-    target_url = f"http://{url.netloc}{url.path}"
-    if url.query:
-        target_url += f"?{url.query}"
+    log(f"New HTTP request from {client_ip}:{client_port} for {url}")
 
     # 处理请求
-    handle_common(client_socket, target_url)
+    handle_common(client_socket, url, headers, method, is_ssl)

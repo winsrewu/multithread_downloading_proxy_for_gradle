@@ -1,6 +1,5 @@
 import select
 import socket
-import threading
 
 from utils import log
 
@@ -37,10 +36,10 @@ def forward_tcp_tunnel(client_socket, target_host, target_port):
         target_socket.connect((target_host, target_port))
         log(f"已连接到目标服务器: {target_host}:{target_port}")
 
-        client_socket.send(b"HTTP/1.1 200 Connection Established\r\n\r\n")
-
         tunnel(client_socket, target_socket)
 
+        client_socket.unwrap()
+        log(f"已断开与客户端的连接")
     except Exception as e:
         log(f"TCP转发失败: {e}")
     finally:
