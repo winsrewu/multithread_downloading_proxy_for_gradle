@@ -11,13 +11,19 @@ from cache_handler import CacheType, get_from_cache, save_to_cache
 
 def improved_multi_thread_download(url: str, headers: dict, file_size: int):
     try:
-        cached_data = get_from_cache(CacheType.WEB_FILE, url)
+        cached_data = get_from_cache(CacheType.WEB_FILE, url + "#" + str(headers) + "#" + str(file_size))
         if cached_data is not None:
             return cached_data
     except Exception as e:
         log(f"获取缓存失败: {str(e)}")
         traceback.print_exc()
         raise
+
+    old_headers = headers
+    new_headers = {}
+    for k, v in headers.items():
+        new_headers[k.lower()] = v
+    headers = new_headers
 
     try:
         log(f"开始多线程下载 (总大小: {file_size/1024/1024:.2f}MB)")
@@ -42,7 +48,7 @@ def improved_multi_thread_download(url: str, headers: dict, file_size: int):
                     headers["Range"] = f"bytes={start}-{end}"
 
                     session = requests.Session()
-                    session.trust_env = DOWNLOADER_PROXIES
+                    session.trust_env = DOWNLOADER_TRUST_ENV
                     
                     # 设置连接超时和读取超时
                     with session.get(url, headers=headers, stream=True, timeout=(5, 30), proxies=DOWNLOADER_PROXIES, allow_redirects=True) as r:
@@ -83,7 +89,7 @@ def improved_multi_thread_download(url: str, headers: dict, file_size: int):
         progress_bar.close()
 
         result = bytes(buffer)
-        save_to_cache(CacheType.WEB_FILE, url, result)
+        save_to_cache(CacheType.WEB_FILE, url + "#" + str(old_headers) + "#" + str(file_size), result)
         log("下载完成并已缓存")
         return result
 

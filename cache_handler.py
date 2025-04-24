@@ -8,6 +8,7 @@ import shutil
 from filelock import FileLock
 
 from configs import *
+import configs
 from utils import log
 from enum import Enum
 
@@ -27,7 +28,7 @@ class CacheType(Enum):
 
 def _parse_cache_meta_line(line: str):
     """解析元数据行"""
-    line_parts = line.strip().split(' ')
+    line_parts = line.strip().split('\t')
     if len(line_parts) != 5:
         raise ValueError("Invalid meta data line")
     return {
@@ -49,7 +50,7 @@ def _parse_cache_meta(meta_str: str):
 
 def _save_cache_meta(meta: list):
     """保存元数据"""
-    return '\n'.join(f"{m['id']} {m['type'].value} {m['name']} {m['last_hit']} {m['size']}" for m in meta)
+    return '\n'.join(f"{m['id']}\t{m['type'].value}\t{m['name']}\t{m['last_hit']}\t{m['size']}" for m in meta)
 
 def _get_available_cache_id(meta: list):
     """获取可用缓存ID"""
@@ -73,8 +74,7 @@ def _check_disk_space():
 
 def save_to_cache(type: CacheType, name: str, data: bytes):
     """保存数据到缓存系统"""
-    global with_cache
-    if (not with_cache) and type == CacheType.WEB_FILE:
+    if (not configs.with_cache) and type == CacheType.WEB_FILE:
         return False
 
     data_size = len(data)
@@ -183,7 +183,7 @@ def get_from_cache(type: CacheType, name: str):
 def _clean_cache():
     """定期清理过期缓存"""
     while True:
-        time.sleep(3600)  # 每小时清理一次
+        time.sleep(3600 * 24)  # 每24小时清理一次
         now = time.time()
         log("Cleaning cache...")
         for cache_key in os.listdir(CACHE_DIR):

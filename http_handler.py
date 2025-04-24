@@ -7,7 +7,7 @@ from io import BytesIO
 from tqdm import tqdm
 
 from configs import *
-from utils import log
+from utils import filter_transfer_headers, log
 
 from downloader import improved_multi_thread_download
 
@@ -27,7 +27,7 @@ def handle_common(client_socket: socket.socket, target_url: str, headers: dict, 
                     session.trust_env = DOWNLOADER_TRUST_ENV
                     with session.request('HEAD', target_url, allow_redirects=True, timeout=10, headers=headers, proxies=DOWNLOADER_PROXIES) as head_response:
                         content_length = int(head_response.headers.get('Content-Length', -1))
-                        response_headers = head_response.headers
+                        response_headers = filter_transfer_headers(head_response.headers)
                         response = head_response
                         if content_length != -1:
                             log(f"Content size: {content_length/1024/1024:.2f}MB")
@@ -41,7 +41,7 @@ def handle_common(client_socket: socket.socket, target_url: str, headers: dict, 
                     continue
 
         # 选择下载方式并发送响应头
-        use_chunked = content_length > DOWNLOADER_MULTIPART_THRESHOLD
+        use_chunked = content_length > DOWNLOADER_MULTIPART_THRESHOLD and headers.get("Range") is None
         if use_chunked:
             # 发送分块传输编码的响应头
             response_headers["Transfer-Encoding"] = "chunked"
@@ -49,14 +49,17 @@ def handle_common(client_socket: socket.socket, target_url: str, headers: dict, 
             response_headers_raw = f"HTTP/1.1 {response.status_code} {response.reason}\r\n"
             for key, value in response_headers.items():
                 response_headers_raw += f"{key}: {value}\r\n"
+            response_headers_raw += "\r\n"
 
             client_socket.sendall(response_headers_raw.encode())
         elif content_length != -1:
             # 发送固定长度的响应头
             response_headers["Transfer-Encoding"] = "chunked"
+            response_headers["Connection"] = "keep-alive"
             response_headers_raw = f"HTTP/1.1 {response.status_code} {response.reason}\r\n"
             for key, value in response_headers.items():
                 response_headers_raw += f"{key}: {value}\r\n"
+            response_headers_raw += "\r\n"
 
             client_socket.sendall(response_headers_raw.encode())
 
@@ -72,7 +75,7 @@ def handle_common(client_socket: socket.socket, target_url: str, headers: dict, 
         if use_chunked:
             log("Using multi-thread download for large file with chunked transfer")
             # 流式处理大文件
-            downloaded_bytes = BytesIO(improved_multi_thread_download(target_url, headers=headers, method=method, file_size=content_length))
+            downloaded_bytes = BytesIO(improved_multi_thread_download(target_url, headers=headers, file_size=content_length))
             downloaded_bytes.seek(0)
             
             with tqdm(total=content_length, unit='B', unit_scale=True, desc="Sending") as pbar:
@@ -92,7 +95,7 @@ def handle_common(client_socket: socket.socket, target_url: str, headers: dict, 
                     pbar.update(len(chunk))
             
             # 发送分块结束标记
-            if use_chunked:# and is_connection_alive():
+            if use_chunked:
                 safe_send(b"0\r\n\r\n")
 
         else:
@@ -103,30 +106,25 @@ def handle_common(client_socket: socket.socket, target_url: str, headers: dict, 
                 response.raise_for_status()
 
                 if content_length == -1:
-                    response_headers["Transfer-Encoding"] = "chunked"
                     response_headers_raw = f"HTTP/1.1 {response.status_code} {response.reason}\r\n"
-                    for key, value in response.headers.items():
+                    for key, value in filter_transfer_headers(response.headers).items():
                         response_headers_raw += f"{key}: {value}\r\n"
+                    response_headers_raw += "\r\n"
 
                     client_socket.sendall(response_headers_raw.encode())
 
                 with tqdm(total=content_length, unit='B', unit_scale=True, desc="Sending") as pbar:
                     for chunk in response.iter_content(chunk_size=16384):
-                        if use_chunked:
-                            chunk_header = f"{len(chunk):X}\r\n".encode()
-                            if not safe_send(chunk_header) or not safe_send(chunk) or not safe_send(b"\r\n"):
-                                break
-                        else:
-                            if not safe_send(chunk):
-                                break
+                        if not safe_send(chunk):
+                            break
                         pbar.update(len(chunk))
-            
-            # 发送分块结束标记
-            if use_chunked:
-                safe_send(b"0\r\n\r\n")
 
-        if is_ssl:
-            client_socket.unwrap()  # 关闭SSL连接
+        client_socket.settimeout(5)  # 5秒操作超时
+        if is_ssl and False:
+            try:
+                client_socket.unwrap()  # 关闭SSL连接
+            except TimeoutError:
+                log(f"SSL connection with {client_ip}:{client_port} timed out")
 
     except requests.exceptions.RequestException as e:
         log(f"Request error: {e}")

@@ -33,7 +33,7 @@ if __name__ == '__main__':
     parser.add_argument("--no-cache", action="store_true", help="Disable cache")
     args = parser.parse_args()
 
-    with_cache = not args.no_cache
+    set_with_cache(not args.no_cache)
 
     try:
         set_gradle_proxies(GRADLE_PROPERTIES_PATH)

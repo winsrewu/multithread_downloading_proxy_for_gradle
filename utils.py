@@ -13,3 +13,11 @@ def get_base_domain(domain: str):
     if len(parts) > 2:
         return '.'.join(parts[-2:])
     return domain
+
+def filter_transfer_headers(headers: dict):
+    """
+    Filter out headers that are related to transfer encoding, such as Content-Encoding, Transfer-Encoding, etc.
+    """
+    transfer_related_headers = ['Transfer-Encoding']
+    filtered_headers = {k: v for k, v in headers.items() if k not in transfer_related_headers}
+    return filtered_headers

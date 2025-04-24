@@ -33,3 +33,6 @@ DISK_CACHE_MAX_FILE_SIZE = 256 * 1024 * 1024  # 缓存区间终点 / Maximum fil
 CACHE_EXPIRE_SECONDS = 24 * 60 * 60  # 缓存有效期 / Cache expiration time in seconds
 
 with_cache = False  # 是否使用缓存 / Whether to use cache
+def set_with_cache(value: bool):
+    global with_cache
+    with_cache = value
