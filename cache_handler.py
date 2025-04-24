@@ -166,6 +166,9 @@ def get_path_from_cache(type: CacheType, name: str):
 
 def get_from_cache(type: CacheType, name: str):
     """从缓存中获取数据"""
+    if not configs.with_cache:
+        return None
+
     path = get_path_from_cache(type, name)
     if path is None:
         return None
