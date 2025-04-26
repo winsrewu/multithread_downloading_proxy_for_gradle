@@ -30,10 +30,10 @@ def start_proxy(proxy_host, proxy_port, handler, server):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument("--no-cache", action="store_true", help="Disable cache")
+    parser.add_argument("--with-cache", action="store_true", help="Enable cache")
     args = parser.parse_args()
 
-    set_with_cache(not args.no_cache)
+    set_with_cache(args.with_cache)
 
     try:
         set_gradle_proxies(GRADLE_PROPERTIES_PATH)
