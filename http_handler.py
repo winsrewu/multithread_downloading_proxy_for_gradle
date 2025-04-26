@@ -1,170 +1,242 @@
+from enum import Enum
+import select
 import socket
-import traceback
-import requests
 import ssl
-
-from io import BytesIO
-from tqdm import tqdm
+import threading
+import time
+import traceback
+from urllib.parse import urlparse
+import requests
 
 from configs import *
-from utils import filter_transfer_headers, log
+import configs
+from utils import decode_header, filter_transfer_headers, log, logger
 
-from downloader import improved_multi_thread_download
+from downloader import download_file_with_schedule, generate_schedule
 
-def handle_common(client_socket: socket.socket, target_url: str, headers: dict, method: str, is_ssl: bool):
-    client_ip, client_port = client_socket.getpeername()
-
+def _handle_multithread_download(client_socket: socket.socket, target_url: str, headers: dict, method: str, is_ssl: bool, content_length: int, response_headers: dict, response: requests.Response):
     try:
-        content_length = -1 # -1表示未知长度
-        response_headers = {}
-        response = None
-
-        if method == "GET":
-            # 获取内容信息 (带重试机制)
-            for attempt in range(3):  # 最多重试3次
-                try:
-                    session = requests.Session()
-                    session.trust_env = DOWNLOADER_TRUST_ENV
-                    with session.request('HEAD', target_url, allow_redirects=True, timeout=10, headers=headers, proxies=DOWNLOADER_PROXIES) as head_response:
-                        content_length = int(head_response.headers.get('Content-Length', -1))
-                        response_headers = filter_transfer_headers(head_response.headers)
-                        response = head_response
-                        if content_length != -1:
-                            log(f"Content size: {content_length/1024/1024:.2f}MB")
-                        else:
-                            log("Content size: unknown")
-                        break
-                except Exception as e:
-                    if attempt == 2:  # 最后一次尝试失败
-                        log(f"Head request failed after 3 attempts: {e}")
-                        content_length = -1
-                    continue
-
-        # 选择下载方式并发送响应头
-        use_chunked = content_length > DOWNLOADER_MULTIPART_THRESHOLD and headers.get("Range") is None
-        if use_chunked:
-            # 发送分块传输编码的响应头
-            response_headers["Transfer-Encoding"] = "chunked"
-            response_headers["Connection"] = "keep-alive"
-            response_headers_raw = f"HTTP/1.1 {response.status_code} {response.reason}\r\n"
-            for key, value in response_headers.items():
-                response_headers_raw += f"{key}: {value}\r\n"
-            response_headers_raw += "\r\n"
-
-            client_socket.sendall(response_headers_raw.encode())
-        elif content_length != -1:
-            # 发送固定长度的响应头
-            response_headers["Transfer-Encoding"] = "chunked"
-            response_headers["Connection"] = "keep-alive"
-            response_headers_raw = f"HTTP/1.1 {response.status_code} {response.reason}\r\n"
-            for key, value in response_headers.items():
-                response_headers_raw += f"{key}: {value}\r\n"
-            response_headers_raw += "\r\n"
-
-            client_socket.sendall(response_headers_raw.encode())
-
-        # 发送响应体
         def safe_send(data):
             try:
                 client_socket.sendall(data)
                 return True
             except (ConnectionResetError, BrokenPipeError, socket.timeout) as e:
-                log(f"Send failed: {type(e).__name__}")
+                logger.error(f"Send failed: {type(e).__name__}")
                 return False
+        
+        response_headers["Connection"] = "keep-alive"
+        response_headers_raw = f"HTTP/1.1 {response.status_code} {response.reason}\r\n"
+        for key, value in response_headers.items():
+            response_headers_raw += f"{key}: {value}\r\n"
+        response_headers_raw += "\r\n"
+        
+        safe_send(response_headers_raw.encode())
 
-        if use_chunked:
-            log("Using multi-thread download for large file with chunked transfer")
-            # 流式处理大文件
-            downloaded_bytes = BytesIO(improved_multi_thread_download(target_url, headers=headers, file_size=content_length))
-            downloaded_bytes.seek(0)
-            
-            with tqdm(total=content_length, unit='B', unit_scale=True, desc="Sending") as pbar:
-                while True:
-                    chunk = downloaded_bytes.read(163840)  # 160KB chunks
-                    if not chunk:
+        schedule = generate_schedule(content_length)
+        chunk_num = len(schedule)
+
+        lock = threading.Lock()
+
+        download_process = threading.Thread(
+            target=download_file_with_schedule,
+            args=(target_url, headers, content_length, schedule, lock),
+        )
+        download_process.start()
+
+        # Main thread sending loop
+        current_chunk_id = 0
+        while True:
+            with lock:
+                if schedule[current_chunk_id]["downloaded"]:
+                    if not safe_send(schedule[current_chunk_id]["chunk_data"]):
+                        raise Exception("Send failed")
+                    schedule[current_chunk_id]["consumed"] = True
+                    if not configs.with_cache:
+                        schedule[current_chunk_id]["chunk_data"] = None
+
+                    current_chunk_id += 1
+                    if current_chunk_id == chunk_num:
                         break
-                    if use_chunked:
-                        # 分块编码格式: [长度]\r\n[数据]\r\n
-                        chunk_header = f"{len(chunk):X}\r\n".encode()
-                        # log(f"Sending chunk: {chunk_header.decode().strip()}")
-                        if not safe_send(chunk_header) or not safe_send(chunk) or not safe_send(b"\r\n"):
-                            break
-                    else:
-                        if not safe_send(chunk):
-                            break
-                    pbar.update(len(chunk))
-            
-            # 发送分块结束标记
-            if use_chunked:
-                safe_send(b"0\r\n\r\n")
 
-        else:
-            log("Downloading directly")
+        if result := download_process.join():
+            if not safe_send(result):
+                raise Exception("Send failed")
+
+        safe_send(b"0\r\n\r\n")
+
+    except Exception as e:
+        logger.error(f"Download failed: {e}")
+        log(traceback.format_exc())
+
+class InterceptStatus(Enum):
+    PASS = 0
+    CLOSE_DIRECTLY = 1
+    NO_PASS = 2
+
+def _on_header(client_socket: socket.socket, header: bytes, is_ssl: bool):
+    method, url, headers = decode_header(header, with_https=False)
+
+    if method != "GET":
+        return InterceptStatus.PASS
+    
+    if headers.get("Range") is not None:
+        return InterceptStatus.PASS
+    
+    content_length = -1
+    response_headers = {}
+    response = None
+
+    attempts = 1
+
+    # Fetch HEAD
+    for attempt in range(attempts):
+        try:
             session = requests.Session()
             session.trust_env = DOWNLOADER_TRUST_ENV
-            with session.request(method, target_url, stream=True, timeout=30, headers=headers, proxies=DOWNLOADER_PROXIES, allow_redirects=True) as response:
-                response.raise_for_status()
+            with session.request('HEAD', url, allow_redirects=False, timeout=10, headers=headers, proxies=DOWNLOADER_PROXIES) as head_response:
+                content_length = int(head_response.headers.get('Content-Length', -1))
+                response_headers = filter_transfer_headers(head_response.headers)
+                response = head_response
+                if content_length != -1:
+                    log(f"Content size: {content_length/1024/1024:.2f}MB")
+                else:
+                    log("Content size: unknown")
+                    return InterceptStatus.PASS
+                break
+        except Exception as e:
+            if attempt == attempts - 1:  # 最后一次尝试失败
+                logger.error(f"Head request failed after {attempts} attempts: {e}")
+                return InterceptStatus.PASS
+            
+    log("Using multi-thread download for large file with chunked transfer")
 
-                if content_length == -1:
-                    response_headers_raw = f"HTTP/1.1 {response.status_code} {response.reason}\r\n"
-                    for key, value in filter_transfer_headers(response.headers).items():
-                        response_headers_raw += f"{key}: {value}\r\n"
-                    response_headers_raw += "\r\n"
+    if content_length >= DOWNLOADER_MULTIPART_THRESHOLD:
+        _handle_multithread_download(client_socket, url, headers, method, is_ssl, content_length, response_headers, response)
+        return InterceptStatus.CLOSE_DIRECTLY
+    
+    return InterceptStatus.PASS
 
-                    client_socket.sendall(response_headers_raw.encode())
+def _extract_http_header(data: bytes):
+    endpos = -1
+    for marker in [b"\r\n\r\n", b"\n\n"]:
+        pos = data.find(marker)
+        if pos != -1:
+            endpos = pos
+            if marker == b"\r\n\r\n":
+                endpos += 4
+            else:
+                endpos += 2
 
-                with tqdm(total=content_length, unit='B', unit_scale=True, desc="Sending") as pbar:
-                    for chunk in response.iter_content(chunk_size=16384):
-                        if not safe_send(chunk):
-                            break
-                        pbar.update(len(chunk))
+            break
 
-        client_socket.settimeout(5)  # 5秒操作超时
-        if is_ssl and False:
-            try:
-                client_socket.unwrap()  # 关闭SSL连接
-            except TimeoutError:
-                log(f"SSL connection with {client_ip}:{client_port} timed out")
+    if endpos == -1:
+        return None, None
+    
+    return data[:endpos], data[endpos:]
 
-    except requests.exceptions.RequestException as e:
-        log(f"Request error: {e}")
-        error_response = (
-            f"HTTP/1.1 502 Bad Gateway\r\n"
-            f"Content-Type: text/plain\r\n"
-            f"Content-Length: {len(str(e))}\r\n\r\n"
-            f"{e}"
-        )
-        client_socket.sendall(error_response.encode())
-        
-    except Exception as e:
-        log(f"Unexpected error: {type(e).__name__}: {e}")
-        traceback.print_exc()
-        error_page = """<html><body><h1>500 Internal Server Error</h1>
-                      <p>Proxy server encountered an error.</p></body></html>"""
-        error_response = (
-            "HTTP/1.1 500 Internal Server Error\r\n"
-            "Content-Type: text/html\r\n"
-            f"Content-Length: {len(error_page)}\r\n\r\n"
-            f"{error_page}"
-        )
+def _tunnel(client: socket.socket, server: socket.socket, is_ssl: bool):
+    sockets = [client, server]
+    client_closed = False
+    server_closed = False
+    client_cache = b""
+
+    def flush_cache(no_send=False):
+        nonlocal client_cache
+        if client_cache and not no_send:
+            server.sendall(client_cache)
+        client_cache = b""
+    
+    while True:
         try:
-            client_socket.sendall(error_response.encode())
-        except:
-            pass
-        
-    finally:
-        client_socket.close()
-        log(f"Connection with {client_ip}:{client_port} closed")
+            time.sleep(0.1)
+            r, _, _ = select.select(sockets, [], [], 5)
+            for sock in r:
+                data = b""
+                while d := sock.recv(4096):
+                    data += d
+                    if len(d) < 4096 or len(data) >= 1024 * 1024:
+                        break
+                
+                if not data:
+                    return
+                
+                if sock is client:
+                    client_cache += data
+                    
+                    if not client_cache.startswith((b"GET", b"POST", b"HEAD", b"PUT", b"DELETE", b"OPTIONS", b"PATCH")):
+                        flush_cache()
+                        continue
+                    
+                    header, _ = _extract_http_header(client_cache)
+                    if header is None:
+                        continue
 
-def handle_http(client_socket: socket.socket, url: str, headers: dict, method: str, is_ssl: bool):
+                    status = _on_header(client, header, is_ssl)
+                    if status == InterceptStatus.PASS:
+                        flush_cache()
+                        continue
+                    elif status == InterceptStatus.CLOSE_DIRECTLY:
+                        return
+                    elif status == InterceptStatus.NO_PASS:
+                        flush_cache(no_send=True)
+                        continue
+                else:
+                    client.sendall(data)
+
+        except (socket.error, ConnectionResetError):
+            logger.error("Socket error")
+            log(traceback.format_exc())
+            return
+
+def handle_http(client_socket: socket.socket, url: str, headers: dict, method: str, is_ssl: bool, init_data: bytes):
     # 设置socket超时和缓冲区
     client_socket.settimeout(30)  # 30秒操作超时
-    client_socket.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 65536)  # 64KB发送缓冲区
-    client_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)  # 禁用Nagle算法
 
     # 记录请求信息
     client_ip, client_port = client_socket.getpeername()
     log(f"New HTTP request from {client_ip}:{client_port} for {url}")
 
-    # 处理请求
-    handle_common(client_socket, url, headers, method, is_ssl)
+    parsed_url = urlparse(url)
+
+    port = parsed_url.port or (443 if parsed_url.scheme == "https" else 80)
+
+    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server_socket.settimeout(30)  # 30秒操作超时
+    server_socket.connect((parsed_url.hostname, port))
+
+    if is_ssl:
+        server_socket = ssl.create_default_context().wrap_socket(server_socket, server_hostname=parsed_url.hostname)
+
+    def close_all():
+        log(f"Closing sockets of {client_ip}:{client_port} for {url}")
+        time.sleep(10)
+        if client_socket.fileno() != -1:
+            if is_ssl:
+                client_socket.unwrap()
+            client_socket.close()
+        if server_socket.fileno() != -1:
+            server_socket.close()
+
+    status = None
+    try:
+        status = _on_header(client_socket, init_data, is_ssl)
+    except Exception as e:
+        logger.error(f"Header hook failed: {e}")
+        traceback.print_exc()
+        close_all()
+        return
+    
+    if status == InterceptStatus.PASS:
+        server_socket.sendall(init_data)
+    elif status == InterceptStatus.CLOSE_DIRECTLY or status == InterceptStatus.NO_PASS:
+        close_all()
+        return
+        
+    try:
+        log(f"Starting tunnel from {client_ip}:{client_port} to {parsed_url.hostname}:{port}")
+        _tunnel(client_socket, server_socket, is_ssl)
+    except Exception as e:
+        logger.error(f"Tunnel failed: {e}")
+        traceback.print_exc()
+    finally:
+        close_all()

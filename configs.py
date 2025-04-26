@@ -14,8 +14,8 @@ CRL_SERVER_PORT = 27580  # CRL分发服务器端口 没事别瞎改 要不然你
 # 下载器阈值 / Downloader thresholds
 DOWNLOADER_MAX_THREADS = 32
 DOWNLOADER_MULTIPART_THRESHOLD = 1 * 1024 * 1024  # 1MB
-DOWNLOADER_PROXIES = {"http": None, "https": None}
-DOWNLOADER_TRUST_ENV = False
+DOWNLOADER_PROXIES = {"http": None, "https": None} # deprecated
+DOWNLOADER_TRUST_ENV = False # deprecated
 
 # 代理地址 / Proxy URLs
 HTTP_PROXY = f"http://{PROXY_HOST}:{PROXY_PORT}"
@@ -36,3 +36,6 @@ with_cache = False  # 是否使用缓存 / Whether to use cache
 def set_with_cache(value: bool):
     global with_cache
     with_cache = value
+
+# socket配置 / Socket configuration
+CLIENT_SOCKET_MAX_CACHE_SIZE = 64 * 1024  # 客户端缓存区最大值 / Maximum size of client socket cache
