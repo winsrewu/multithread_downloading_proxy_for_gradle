@@ -136,8 +136,6 @@ def _extract_http_header(data: bytes):
 
 def _tunnel(client: socket.socket, server: socket.socket, is_ssl: bool):
     sockets = [client, server]
-    client_closed = False
-    server_closed = False
     client_cache = b""
 
     def flush_cache(no_send=False):
@@ -152,9 +150,9 @@ def _tunnel(client: socket.socket, server: socket.socket, is_ssl: bool):
             r, _, _ = select.select(sockets, [], [], 5)
             for sock in r:
                 data = b""
-                while d := sock.recv(4096):
+                while d := sock.recv(TUNNEL_RECV_SIZE):
                     data += d
-                    if len(d) < 4096 or len(data) >= 1024 * 1024:
+                    if len(d) < TUNNEL_RECV_SIZE or len(data) >= TUNNEL_RECV_BUFFER_SIZE:
                         break
                 
                 if not data:

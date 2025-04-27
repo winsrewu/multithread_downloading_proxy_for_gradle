@@ -39,3 +39,7 @@ def set_with_cache(value: bool):
 
 # socket配置 / Socket configuration
 CLIENT_SOCKET_MAX_CACHE_SIZE = 64 * 1024  # 客户端缓存区最大值 / Maximum size of client socket cache
+
+# tunnel配置 / Tunnel configuration
+TUNNEL_RECV_SIZE = 4096  # 隧道接收一级缓存区大小 / Tunnel receive level 1 buffer size
+TUNNEL_RECV_BUFFER_SIZE = 1024 * 1024  # 隧道接收二级缓存区大小 / Tunnel receive level 2 buffer size
