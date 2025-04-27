@@ -186,7 +186,6 @@ def get_from_cache(type: CacheType, name: str):
 def _clean_cache():
     """定期清理过期缓存"""
     while True:
-        time.sleep(3600 * 24)  # 每24小时清理一次
         now = time.time()
         log("Cleaning cache...")
         for cache_key in os.listdir(CACHE_DIR):
@@ -221,6 +220,7 @@ def _clean_cache():
                 log(f"Failed to clean cache: {e}")
                 traceback.print_exc()
         log("Cleaning cache done")
+        time.sleep(CACHE_EXPIRE_SECONDS)  # 每24小时清理一次
 
 # 启动清理线程
 threading.Thread(target=_clean_cache, daemon=True).start()
