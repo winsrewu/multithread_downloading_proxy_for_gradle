@@ -37,6 +37,15 @@ def set_with_cache(value: bool):
     global with_cache
     with_cache = value
 
+with_history = False  # 是否使用历史记录 / Whether to use history
+def set_with_history(value: bool):
+    global with_history
+    with_history = value
+
+HISTORY_DIR = "log"  # 历史记录目录 / History directory
+HISTORY_DIVIDER_H1 = "##=============##"
+HISTORY_DIVIDER_H2 = "==========="
+
 # socket配置 / Socket configuration
 CLIENT_SOCKET_MAX_CACHE_SIZE = 64 * 1024  # 客户端缓存区最大值 / Maximum size of client socket cache
 

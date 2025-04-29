@@ -1,14 +1,16 @@
 import argparse
+from pathlib import Path
 import socket
 import threading
 import time
 from client_handler import handle_client
+import configs
 from crl_server import start_crl_server
 
 from configs import *
 
 from gradle_handler import set_gradle_proxies, clear_gradle_proxies
-
+from log_handler import request_tracker
 from utils import log
 
 
@@ -31,9 +33,11 @@ def start_proxy(proxy_host, proxy_port, handler, server):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--with-cache", action="store_true", help="Enable cache")
+    parser.add_argument("--with-history", action="store_true", help="Enable history")
     args = parser.parse_args()
 
     set_with_cache(args.with_cache)
+    set_with_history(args.with_history)
 
     try:
         set_gradle_proxies(GRADLE_PROPERTIES_PATH)
@@ -53,3 +57,8 @@ if __name__ == '__main__':
             time.sleep(1)
     finally:
         clear_gradle_proxies(GRADLE_PROPERTIES_PATH)
+        if configs.with_history:
+            Path(HISTORY_DIR).mkdir(exist_ok=True)
+            request_tracker.dump(HISTORY_DIR + "/" + str(time.strftime('%Y-%m-%d-%H-%M-%S', time.localtime())) + "_sort_by_time.log")
+            request_tracker.dump(HISTORY_DIR + "/" + str(time.strftime('%Y-%m-%d-%H-%M-%S', time.localtime())) + "_sort_by_size.log",
+                                  sort_lambda=lambda x: -x.get_size())

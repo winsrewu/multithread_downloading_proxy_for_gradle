@@ -10,3 +10,5 @@ crl.pem
 
 cacerts
 truststore.jks
+
+log/*

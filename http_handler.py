@@ -11,8 +11,8 @@ import requests
 from configs import *
 import configs
 from utils import decode_header, filter_transfer_headers, log, logger
-
 from downloader import download_file_with_schedule, generate_schedule
+from log_handler import LoggingSocketDecorator, request_tracker
 
 def _handle_multithread_download(client_socket: socket.socket, target_url: str, headers: dict, method: str, is_ssl: bool, content_length: int, response_headers: dict, response: requests.Response):
     try:
@@ -204,6 +204,11 @@ def handle_http(client_socket: socket.socket, url: str, headers: dict, method: s
 
     if is_ssl:
         server_socket = ssl.create_default_context().wrap_socket(server_socket, server_hostname=parsed_url.hostname)
+
+    if configs.with_history:
+        tracker = request_tracker.init_request(url)
+        client_socket = LoggingSocketDecorator(client_socket, tracker)
+        server_socket = LoggingSocketDecorator(server_socket, tracker)
 
     def close_all():
         log(f"Closing sockets of {client_ip}:{client_port} for {url}")
