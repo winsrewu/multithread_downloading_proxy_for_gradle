@@ -34,13 +34,15 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--with-cache", action="store_true", help="Enable cache")
     parser.add_argument("--with-history", action="store_true", help="Enable history")
+    parser.add_argument("--gradle", action="store_true", help="Set gradle proxies")
     args = parser.parse_args()
 
     set_with_cache(args.with_cache)
     set_with_history(args.with_history)
 
     try:
-        set_gradle_proxies(GRADLE_PROPERTIES_PATH)
+        if args.gradle:
+            set_gradle_proxies(GRADLE_PROPERTIES_PATH)
         
         # Start CRL server in a separate thread
         crl_thread = threading.Thread(
@@ -56,7 +58,8 @@ if __name__ == '__main__':
         while True:
             time.sleep(1)
     finally:
-        clear_gradle_proxies(GRADLE_PROPERTIES_PATH)
+        if args.gradle:
+            clear_gradle_proxies(GRADLE_PROPERTIES_PATH)
         if configs.with_history:
             Path(HISTORY_DIR).mkdir(exist_ok=True)
             request_tracker.dump(HISTORY_DIR + "/" + str(time.strftime('%Y-%m-%d-%H-%M-%S', time.localtime())) + "_sort_by_time.log")
