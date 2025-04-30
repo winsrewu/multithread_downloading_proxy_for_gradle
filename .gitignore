@@ -12,3 +12,5 @@ cacerts
 truststore.jks
 
 log/*
+
+.vscode/*
