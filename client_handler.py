@@ -25,15 +25,20 @@ def handle_ssl_client(client_socket: socket.socket, domain: str):
         logger.error(f"SSL handshake failed: {e}")
         client_socket.close()
 
-def handle_client(client_socket: socket.socket, with_https=False):
+def handle_client(client_socket: socket.socket, with_https=False, existing_buf=b''):
     try:
-        request_raw = b''
+        request_raw = existing_buf
         while buf := client_socket.recv(4096):
             request_raw += buf
             if len(buf) < 4096:
                 break
 
-        request = request_raw.decode('utf-8')
+        # Try UTF-8 first, fallback to ISO-8859-1 if fails
+        try:
+            request = request_raw.decode('utf-8')
+        except UnicodeDecodeError:
+            request = request_raw.decode('iso-8859-1')
+            
         if not request:
             log("Received empty request, closing socket.")
             client_socket.close()

@@ -102,14 +102,20 @@ def decode_header(data: bytes, with_https: bool):
     """
     Decode header data
     """
-    header = data.decode('utf-8')
+    # Try UTF-8 first, fallback to ISO-8859-1 if fails
+    try:
+        header = data.decode('utf-8')
+    except UnicodeDecodeError:
+        header = data.decode('iso-8859-1')
 
-    first_line = header.split('\r\n')[0]
-    parts = first_line.split()
+    first_line = header.split('\r\n')[0].strip()
+    parts = [p for p in first_line.split(' ') if p]  # Remove empty strings from split
     if len(parts) < 3:
-        raise ValueError("Invalid HTTP request line")
+        raise ValueError(f"Invalid HTTP request line: {first_line}")
     
-    method, path_or_url, version = parts
+    method = parts[0]
+    path_or_url = parts[1]
+    version = ' '.join(parts[2:])  # Handle cases where version contains spaces
 
     headers = {}
     for line in header.split('\r\n')[1:]:
@@ -118,15 +124,20 @@ def decode_header(data: bytes, with_https: bool):
         parts = line.split(':', 1)
         if len(parts)!= 2:
             raise ValueError("Invalid HTTP header line")
-        headers[parts[0].strip()] = parts[1].strip()
+        key = parts[0].strip().lower().capitalize()
+        headers[key] = parts[1].strip()
 
     url = path_or_url
 
     if not url.startswith(("http://", "https://")):
         # get from host header, ignoring https
-        if host := headers["Host"]:
-            url = f"{'https' if with_https else 'http'}://{host}{path_or_url}"
-        else:
-            raise ValueError("No Host header in request")
+        host = headers.get("Host")
+        if not host:
+            # Try alternative headers
+            host = headers.get("X-Forwarded-Host") or headers.get("X-Host")
+            if not host:
+                raise ValueError("No Host, X-Forwarded-Host or X-Host header in request")
+        
+        url = f"{'https' if with_https else 'http'}://{host}{path_or_url}"
         
     return method, url, headers

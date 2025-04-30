@@ -35,6 +35,7 @@ if __name__ == '__main__':
     parser.add_argument("--with-cache", action="store_true", help="Enable cache")
     parser.add_argument("--with-history", action="store_true", help="Enable history")
     parser.add_argument("--gradle", action="store_true", help="Set gradle proxies")
+    parser.add_argument("--socks5", action="store_true", help="Enable SOCKS5 proxy")
     args = parser.parse_args()
 
     set_with_cache(args.with_cache)
@@ -53,8 +54,12 @@ if __name__ == '__main__':
         crl_thread.start()
 
         http_server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-
         threading.Thread(target=start_proxy, args=(PROXY_HOST, PROXY_PORT, handle_client, http_server), daemon=True, name="HTTP Proxy").start()
+
+        if args.socks5:
+            from socks_handler import handle_socks5_client
+            socks5_server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            threading.Thread(target=start_proxy, args=(PROXY_HOST, SOCKS5_PORT, handle_socks5_client, socks5_server), daemon=True, name="SOCKS5 Proxy").start()
         while True:
             time.sleep(1)
     finally:

@@ -8,7 +8,7 @@ from cryptography.hazmat.backends import default_backend
 
 from datetime import datetime, timedelta, timezone
 from cache_handler import CacheType, get_path_from_cache, save_to_cache
-from configs import CERT_FILE, CRL_SERVER_HOST, CRL_SERVER_PORT, KEY_FILE, CRL_FILE
+from configs import ALWAYS_APPEND_DOMAIN_NAMES, CERT_FILE, CRL_SERVER_HOST, CRL_SERVER_PORT, KEY_FILE, CRL_FILE
 from utils import log
 
 # Module-level cache with thread-local storage
@@ -211,6 +211,8 @@ def _issue_certificate(base_domain: str, domains: list[str]):
 
 def get_certificate(base_domain: str, domains: list[str]):
     """Get certificate for the given domain, or issue a new one if not found in cache"""
+    for domain in ALWAYS_APPEND_DOMAIN_NAMES:
+        domains.append(domain)
     key = base_domain + ":" + ",".join(domains)
     # First check cache
     cache_path = get_path_from_cache(CacheType.CERT, key)
