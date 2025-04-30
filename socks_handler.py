@@ -3,7 +3,7 @@ import struct
 import select
 from typing import Tuple
 from configs import *
-from utils import log
+from utils import log, logger
 from client_handler import handle_client, handle_ssl_client
 
 class Socks5Handler:
@@ -21,7 +21,7 @@ class Socks5Handler:
             version, nmethods = self._recv_initial_request()
             if version != 0x05:
                 raise ValueError(f"Unsupported SOCKS version: {version}")
-            log(f"Received SOCKS5 version {version} and {nmethods} methods")
+            # log(f"Received SOCKS5 version {version} and {nmethods} methods")
 
             # Send method selection (0x00 - no authentication)
             self.client_socket.sendall(bytes([0x05, 0x00]))
@@ -30,7 +30,7 @@ class Socks5Handler:
             version, cmd, _, addr_type = self._recv_request()
             if version != 0x05:
                 raise ValueError(f"Unsupported SOCKS version: {version}")
-            log(f"Received SOCKS5 request for {cmd} to {addr_type}")
+            # log(f"Received SOCKS5 request for {cmd} to {addr_type}")
 
             # Handle different address types
             if addr_type == 0x01:  # IPv4
@@ -48,7 +48,7 @@ class Socks5Handler:
 
             port = struct.unpack('!H', self.client_socket.recv(2))[0]
 
-            log(f"Received request for {addr}:{port}")
+            # log(f"Received request for {addr}:{port}")
 
             # 3. Handle command
             if cmd == 0x01:  # CONNECT
@@ -61,7 +61,7 @@ class Socks5Handler:
                 raise ValueError(f"Unsupported command: {cmd}")
 
         except Exception as e:
-            log(f"SOCKS5 error: {e}")
+            logger.error(f"SOCKS5 error: {e}")
             self._send_reply(0x05, 0x01)  # General failure
             if self.remote_socket:
                 self.remote_socket.close()
@@ -97,7 +97,7 @@ class Socks5Handler:
         except socket.timeout:
             raise ValueError("Negotiation timeout")
         except Exception as e:
-            log(f"Error during initial request: {e}")
+            logger.error(f"Error during initial request: {e}")
             raise
 
     def _recv_request(self) -> Tuple[int, int, int, int]:
@@ -120,15 +120,15 @@ class Socks5Handler:
             
             self.remote_socket = socket.socket(family, socket.SOCK_STREAM)
             self.remote_socket.settimeout(10.0)  # Set connection timeout
-            log(f"Connecting to {addr}:{port}")
+            # log(f"Connecting to {addr}:{port}")
             try:
                 self.remote_socket.connect((addr, port))
                 if not self.client_socket._closed:  # Check if client still connected
                     self._send_reply(0x00, 0x00)  # Success
                 else:
-                    log("Client disconnected before reply could be sent")
+                    logger.error("Client disconnected before reply could be sent")
             except socket.timeout:
-                log(f"Connection timeout to {addr}:{port}")
+                logger.error(f"Connection timeout to {addr}:{port}")
                 raise
 
             # Detect traffic type (HTTP or HTTPS)
@@ -137,21 +137,21 @@ class Socks5Handler:
             if self.is_http:  # Handle both HTTP and HTTPS
                 # Check if it's HTTPS (TLS) or plain HTTP
                 if len(self.buffer) >= 3 and self.buffer[0] == 0x16 and self.buffer[1] == 0x03:
-                    log("Wrapping HTTPS connection with SSL")
+                    # log("Wrapping HTTPS connection with SSL")
                     handle_ssl_client(self.client_socket, addr)
                 else:
-                    log("Handling as HTTP proxy")
+                    # log("Handling as HTTP proxy")
                     handle_client(self.client_socket, existing_buf=self.buffer[:])
                 self.buffer = b''  # Clear buffer after handling client
             else:
                 # Direct forwarding for non-HTTP traffic
                 self._transfer_data()
         except socket.gaierror as e:
-            log(f"Address resolution failed for {addr}:{port}: {e}")
+            logger.error(f"Address resolution failed for {addr}:{port}: {e}")
             self._send_reply(0x05, 0x04)  # Host unreachable
             raise
         except Exception as e:
-            log(f"Connection failed to {addr}:{port}: {e}")
+            logger.error(f"Connection failed to {addr}:{port}: {e}")
             self._send_reply(0x05, 0x04)  # Host unreachable
             raise
 
@@ -161,7 +161,7 @@ class Socks5Handler:
             # Peek at the first 16 bytes without consuming them
             data = self.client_socket.recv(16, socket.MSG_PEEK)
             self.buffer += data
-            log(f"Received {data}")
+            # log(f"Received {data}")
             
             # Check for TLS/SSL handshake (HTTPS)
             if len(data) >= 3 and data[0] == 0x16 and data[1] == 0x03:

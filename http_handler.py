@@ -14,7 +14,15 @@ from utils import decode_header, filter_transfer_headers, log, logger
 from downloader import download_file_with_schedule, generate_schedule
 from log_handler import LoggingSocketDecorator, request_tracker
 
-def _handle_multithread_download(client_socket: socket.socket, target_url: str, headers: dict, method: str, is_ssl: bool, content_length: int, response_headers: dict, response: requests.Response):
+def _handle_multithread_download(client_socket: socket.socket, target_url: str, headers: dict, method: str, is_ssl: bool, content_length: int, response_headers: dict, response: requests.Response, range: str | None, full_length: int | None):
+    l_range = 0
+    r_range = None
+    if range is not None:
+        _range = range.split("=")[1]
+        l_range = int(_range.split("-")[0])
+        if len(_range.split("-")) == 2 and _range.split("-")[1] != "":
+            r_range = int(_range.split("-")[1])
+
     try:
         def safe_send(data):
             try:
@@ -23,7 +31,13 @@ def _handle_multithread_download(client_socket: socket.socket, target_url: str, 
             except (ConnectionResetError, BrokenPipeError, socket.timeout) as e:
                 logger.error(f"Send failed: {type(e).__name__}")
                 return False
+            
+        if not range or not r_range:
+            r_range = l_range + content_length - 1
         
+        if range is not None:
+            response_headers["Content-Range"] = f"bytes {l_range}-{r_range}/{full_length}"
+            response_headers["Accept-Ranges"] = "bytes"
         response_headers["Connection"] = "keep-alive"
         response_headers_raw = f"HTTP/1.1 {response.status_code} {response.reason}\r\n"
         for key, value in response_headers.items():
@@ -32,14 +46,14 @@ def _handle_multithread_download(client_socket: socket.socket, target_url: str, 
         
         safe_send(response_headers_raw.encode())
 
-        schedule = generate_schedule(content_length)
+        schedule = generate_schedule(l_range, r_range)
         chunk_num = len(schedule)
 
         lock = threading.Lock()
 
         download_process = threading.Thread(
             target=download_file_with_schedule,
-            args=(target_url, headers, content_length, schedule, lock),
+            args=(target_url, headers, r_range - l_range + 1, schedule, lock),
         )
         download_process.start()
 
@@ -74,15 +88,18 @@ class InterceptStatus(Enum):
     NO_PASS = 2
 
 def _on_header(client_socket: socket.socket, header: bytes, is_ssl: bool):
-    method, url, headers = decode_header(header, with_https=False)
+    method, url, headers = decode_header(header, is_ssl)
 
     if method != "GET":
         return InterceptStatus.PASS
     
-    if headers.get("Range") is not None:
+    range_h = headers.get("Range")
+    # if range is too complex, we don't handle it
+    if range_h is not None and "," in range_h:
         return InterceptStatus.PASS
     
     content_length = -1
+    full_length = -1
     response_headers = {}
     response = None
 
@@ -95,6 +112,8 @@ def _on_header(client_socket: socket.socket, header: bytes, is_ssl: bool):
             session.trust_env = DOWNLOADER_TRUST_ENV
             with session.request('HEAD', url, allow_redirects=False, timeout=10, headers=headers, proxies=DOWNLOADER_PROXIES) as head_response:
                 content_length = int(head_response.headers.get('Content-Length', -1))
+                if head_response.headers.get('Content-Range') is not None:
+                    full_length = int(head_response.headers.get('Content-Range', None).split("/")[-1])
                 response_headers = filter_transfer_headers(head_response.headers)
                 response = head_response
                 if content_length != -1:
@@ -111,7 +130,7 @@ def _on_header(client_socket: socket.socket, header: bytes, is_ssl: bool):
     log("Using multi-thread download for large file with chunked transfer")
 
     if content_length >= DOWNLOADER_MULTIPART_THRESHOLD:
-        _handle_multithread_download(client_socket, url, headers, method, is_ssl, content_length, response_headers, response)
+        _handle_multithread_download(client_socket, url, headers, method, is_ssl, content_length, response_headers, response, range_h, full_length)
         return InterceptStatus.CLOSE_DIRECTLY
     
     return InterceptStatus.PASS

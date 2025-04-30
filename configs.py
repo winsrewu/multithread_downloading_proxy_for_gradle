@@ -10,13 +10,14 @@ KEY_FILE = "ca_server.key"
 CRL_FILE = "crl.pem"  # 证书吊销列表文件 / Certificate Revocation List file
 CRL_SERVER_HOST = "127.0.0.1"  # CRL分发服务器主机 / CRL distribution server host
 CRL_SERVER_PORT = 27580  # CRL分发服务器端口 没事别瞎改 要不然你就得删缓存了 / CRL distribution server port (Don't change randomly or you'll need to clear cache)
-ALWAYS_APPEND_DOMAIN_NAMES = ["*.honkaiimpact3.com"] # 证书强制附加域名 / Force append domain names to certificate
+ALWAYS_APPEND_DOMAIN_NAMES = ["*.honkaiimpact3.com", "hoyoverse.com", "*.hoyoverse.com"] # 证书强制附加域名 / Force append domain names to certificate
 
 # 下载器阈值 / Downloader thresholds
 DOWNLOADER_MAX_THREADS = 32
 DOWNLOADER_MULTIPART_THRESHOLD = 1 * 1024 * 1024  # 1MB
 DOWNLOADER_PROXIES = {"http": None, "https": None} # deprecated
 DOWNLOADER_TRUST_ENV = False # deprecated
+DOWNLOADER_MAX_CHUNK_SIZE = 512 * 1024  # 0.5MB
 
 # 代理地址 / Proxy URLs
 HTTP_PROXY = f"http://{PROXY_HOST}:{PROXY_PORT}"

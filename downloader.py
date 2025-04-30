@@ -11,18 +11,18 @@ from configs import *
 from utils import log, progress_bar, logger
 from cache_handler import CacheType, get_from_cache, save_to_cache
 
-def generate_schedule(file_size: int):
+def generate_schedule(l_range: int, r_range: int):
+    file_size = r_range - l_range + 1
     # decide the chunk size based on the file size
     if file_size <= 10 * 1024 * 1024:  # 10MB
-        chunk_size = file_size // DOWNLOADER_MAX_THREADS // 2
-    elif file_size <= 50 * 1024 * 1024:  # 50MB
-        chunk_size = file_size // DOWNLOADER_MAX_THREADS // 3
-    elif file_size <= 100 * 1024 * 1024:  # 100MB
-        chunk_size = file_size // DOWNLOADER_MAX_THREADS // 5
+        chunk_size = file_size // DOWNLOADER_MAX_THREADS
     elif file_size <= 500 * 1024 * 1024:  # 500MB
-        chunk_size = file_size // DOWNLOADER_MAX_THREADS // 7
+        chunk_size = file_size // DOWNLOADER_MAX_THREADS // 3
     else:
-        chunk_size = file_size // DOWNLOADER_MAX_THREADS // 10
+        chunk_size = DOWNLOADER_MAX_CHUNK_SIZE
+
+    if chunk_size > DOWNLOADER_MAX_CHUNK_SIZE:
+        chunk_size = DOWNLOADER_MAX_CHUNK_SIZE
 
     schedule = []
 
@@ -32,8 +32,8 @@ def generate_schedule(file_size: int):
         start = i * chunk_size
         end = min(start + chunk_size - 1, file_size - 1)
         schedule.append({
-            "start": start,
-            "end": end,
+            "start": start + l_range,
+            "end": end + l_range,
             "chunk_id": i,
             "chunk_data": None,
             "consumed": False,
@@ -56,7 +56,7 @@ def download_file_with_schedule(url: str, headers: dict, file_size: int, schedul
     old_headers = headers
     new_headers = {}
     for k, v in headers.items():
-        new_headers[k.lower()] = v
+        new_headers[k] = v
     headers = new_headers
 
     progress_task = progress_bar.create_task(f"downloading {url}", total=file_size)
@@ -75,18 +75,21 @@ def download_file_with_schedule(url: str, headers: dict, file_size: int, schedul
                     end = schedule_item["end"]
                     headers["Range"] = f"bytes={start}-{end}"
 
-                    # session = requests.Session()
-                    # session.trust_env = DOWNLOADER_TRUST_ENV
+                    session = requests.Session()
+                    session.trust_env = DOWNLOADER_TRUST_ENV
 
-                    http = urllib3.PoolManager()
+                    # http = urllib3.PoolManager()
                     
                     # 设置连接超时和读取超时
-                    # with session.get(url, headers=headers, stream=True, timeout=(5, 30), proxies=DOWNLOADER_PROXIES, allow_redirects=True) as r:
-                    with http.request('GET', url, headers=headers, preload_content=False, timeout=urllib3.Timeout(connect=5, read=30), retries=urllib3.Retry(total=3)) as r:
-                        r.decode_content = False
-                        if r.status >= 300 or r.status < 200:
-                            raise requests.exceptions.HTTPError(f"HTTP {r.status} {r.reason}")
-                        chunk_data = r.read()
+                    with session.get(url, headers=headers, stream=False, timeout=(5, 30), proxies=DOWNLOADER_PROXIES, allow_redirects=False) as r:
+                    # with http.request('GET', url, headers=headers, preload_content=False, timeout=urllib3.Timeout(connect=5, read=30), retries=urllib3.Retry(total=3)) as r:
+                        # r.decode_content = False
+                        if r.status_code >= 300 or r.status_code < 200:
+                            raise requests.exceptions.HTTPError(f"HTTP {r.status_code} {r.reason}")
+                        chunk_data = r.content
+
+                        if len(chunk_data) != (end - start + 1):
+                            raise Exception(f"分片大小不匹配: {len(chunk_data)}!= {(end - start + 1)} for {schedule_item['chunk_id']}")
 
                         # log(f"response headers: {r.headers}") #!TEST
                         
@@ -98,7 +101,7 @@ def download_file_with_schedule(url: str, headers: dict, file_size: int, schedul
 
                     break  # 下载成功则退出循环
                     
-                except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+                except Exception as e:
                     retries += 1
                     if retries > max_retries:
                         with lock:
@@ -107,12 +110,6 @@ def download_file_with_schedule(url: str, headers: dict, file_size: int, schedul
                             traceback.print_exc()
                         break
                     time.sleep(2 ** retries)  # 指数退避重试
-                except Exception as e:
-                    with lock:
-                        exceptions.append(e)
-                        logger.error(f"分片 {schedule_item['chunk_id']} 下载异常: {str(e)}")
-                        traceback.print_exc()
-                    break
 
         # 使用线程池动态分配任务
         with ThreadPoolExecutor(max_workers=DOWNLOADER_MAX_THREADS) as executor:
