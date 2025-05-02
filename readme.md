@@ -28,11 +28,6 @@ cacerts是你从你的java home/lib/security目录下找到的证书文件，tru
   cache: /path/to/cache/file2.zip
 ```
 
-## 手动缓存刷新
-
-你可以手动刷新缓存, 配置文件保存在configs.py指定的MFC_CONFIG_FILE里, 例子如下:
-```
-
 ## 相关推荐工具
 [netch](https://github.com/netchx/netch) 强制为特定软件使用socks5代理  
 [dn](https://github.com/franticxx/dn) 多线程下载器(建议大于等于0.1.4版本)  
@@ -73,7 +68,7 @@ You can specify files to be returned directly from cache, configuration is store
   cache: /path/to/cache/file2.zip
 ```
 
-## Related tools
+## Recommanded Related tools
 [netch](https://github.com/netchx/netch) Force proxy for specific software  
 [dn](https://github.com/franticxx/dn) Multi-thread downloading tool (version >= 0.1.4 is recommended)  
 
