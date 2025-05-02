@@ -10,11 +10,12 @@ import requests
 
 from configs import *
 import configs
+from mfc_handler import get_mfc_dir, handle_mfc_download, is_cache_disabled
 from utils import decode_header, filter_transfer_headers, log, logger
 from downloader import download_file_with_schedule, generate_schedule
 from log_handler import LoggingSocketDecorator, request_tracker
 
-def _handle_multithread_download(client_socket: socket.socket, target_url: str, headers: dict, method: str, is_ssl: bool, content_length: int, response_headers: dict, response: requests.Response, range: str | None, full_length: int | None):
+def _handle_multithread_download(client_socket: socket.socket, target_url: str, headers: dict, content_length: int, response_headers: dict, response: requests.Response, range: str | None, full_length: int | None):
     l_range = 0
     r_range = None
     if range is not None:
@@ -76,7 +77,7 @@ def _handle_multithread_download(client_socket: socket.socket, target_url: str, 
             if not safe_send(result):
                 raise Exception("Send failed")
 
-        safe_send(b"0\r\n\r\n")
+        safe_send(b"\r\n")
 
     except Exception as e:
         logger.error(f"Download failed: {e}")
@@ -98,6 +99,9 @@ def _on_header(client_socket: socket.socket, header: bytes, is_ssl: bool):
     if range_h is not None and "," in range_h:
         return InterceptStatus.PASS
     
+    if is_cache_disabled(url):
+        return InterceptStatus.PASS
+    
     content_length = -1
     full_length = -1
     response_headers = {}
@@ -114,6 +118,8 @@ def _on_header(client_socket: socket.socket, header: bytes, is_ssl: bool):
                 content_length = int(head_response.headers.get('Content-Length', -1))
                 if head_response.headers.get('Content-Range') is not None:
                     full_length = int(head_response.headers.get('Content-Range', None).split("/")[-1])
+                else:
+                    full_length = content_length # full file, no range
                 response_headers = filter_transfer_headers(head_response.headers)
                 response = head_response
                 if content_length != -1:
@@ -127,10 +133,14 @@ def _on_header(client_socket: socket.socket, header: bytes, is_ssl: bool):
                 logger.error(f"Head request failed after {attempts} attempts: {e}")
                 return InterceptStatus.PASS
             
-    log("Using multi-thread download for large file with chunked transfer")
+    if get_mfc_dir(url) is not None:
+        log("Using manual cache for large file")
+        handle_mfc_download(client_socket, url, headers, content_length, response_headers, response, range_h, full_length)
+        return InterceptStatus.CLOSE_DIRECTLY
 
     if content_length >= DOWNLOADER_MULTIPART_THRESHOLD:
-        _handle_multithread_download(client_socket, url, headers, method, is_ssl, content_length, response_headers, response, range_h, full_length)
+        log("Using multi-thread download for large file with chunked transfer")
+        _handle_multithread_download(client_socket, url, headers, content_length, response_headers, response, range_h, full_length)
         return InterceptStatus.CLOSE_DIRECTLY
     
     return InterceptStatus.PASS

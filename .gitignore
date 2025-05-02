@@ -14,3 +14,5 @@ truststore.jks
 log/*
 
 .vscode/*
+
+mfc.yaml

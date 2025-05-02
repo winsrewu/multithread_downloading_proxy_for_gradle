@@ -16,6 +16,22 @@ cacerts是你从你的java home/lib/security目录下找到的证书文件，tru
 记得用gradle对应的java home  
 记得重启你的IDE  
 
+## 手动文件缓存
+
+你可以手动指定直接从缓存返回的文件, 配置文件保存在configs.py指定的MFC_CONFIG_FILE里, 例子如下:
+
+```yaml
+- url: https://example.com/file.zip # 对这个url跳过缓存(严格匹配), 优先级最高
+  cache: false
+- url: https://example.com/file2.zip # 对这个url使用指定缓存路径
+  cache: /path/to/cache/file2.zip
+```
+
+## 手动缓存刷新
+
+你可以手动刷新缓存, 配置文件保存在configs.py指定的MFC_CONFIG_FILE里, 例子如下:
+```
+
 ## 相关推荐工具
 [netch](https://github.com/netchx/netch) 强制为特定软件使用socks5代理  
 [dn](https://github.com/franticxx/dn) 多线程下载器(建议大于等于0.1.4版本)  
@@ -43,6 +59,17 @@ Note: CA certificate import is optional and only required when using as system p
 cacerts is the certificate file from your java home/lib/security directory. truststore.jks is the truststore file you created for gradle.  
 Make sure to use the java home corresponding to your gradle installation.  
 Don't forget to restart your IDE after configuration.  
+
+## Manual file cache
+
+You can specify files to be returned directly from cache, configuration is stored in MFC_CONFIG_FILE specified in configs.py, for example:
+
+```yaml
+- url: https://example.com/file.zip # Skip cache for this url (strict match), highest priority
+  cache: false
+- url: https://example.com/file2.zip # Use specified cache path for this url
+  cache: /path/to/cache/file2.zip
+```
 
 ## Related tools
 [netch](https://github.com/netchx/netch) Force proxy for specific software  

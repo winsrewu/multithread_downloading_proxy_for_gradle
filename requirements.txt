@@ -4,3 +4,4 @@ tqdm
 filelock
 waitress
 rich
+pyyaml
