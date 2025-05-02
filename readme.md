@@ -45,8 +45,8 @@ Make sure to use the java home corresponding to your gradle installation.
 Don't forget to restart your IDE after configuration.  
 
 ## Related tools
-[netch](https://github.com/netchx/netch) Force proxy for specific software
-[dn](https://github.com/franticxx/dn) Multi-thread downloading tool (version >= 0.1.4 is recommended)
+[netch](https://github.com/netchx/netch) Force proxy for specific software  
+[dn](https://github.com/franticxx/dn) Multi-thread downloading tool (version >= 0.1.4 is recommended)  
 
 ```bash
 keytool -importcert -alias do_not_trust_multithread_downloading_proxy_ca -file ca_server.crt -keystore truststore.jks -storepass changeit -noprompt
