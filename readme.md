@@ -7,7 +7,8 @@
 通过 --with-cache 参数开启缓存, 默认会对一些特定文件上24小时缓存, 详情见configs.py  
 通过 --with-history 参数开启历史记录, 它会记录流量, 然后默认在关闭时dump到/log  
 通过 --gradle 参数为gradle开启代理, 详细配置见configs.py  
-通过 --socks5 参数开启socks5代理
+通过 --socks5 参数开启socks5代理  
+通过 --print-env 参数来打印关于代理的环境变量  
 
 参考init.py来导入ca证书  
 注意, ca证书导入是可选项, 当且仅当你想要它作为系统代理的时候才需要使用, 而且它比较危险, 建议使用过后删除  
@@ -52,6 +53,7 @@ Cache can be enabled with --with-cache parameter. By default it sets 24-hour cac
 History can be enabled with --with-history parameter. It records traffic and dumps it to /log when closed.  
 Gradle proxying can be enabled with --gradle parameter. See configs.py for details of configuration.  
 Socks5 proxying can be enabled with --socks5 parameter.  
+Print environment variables about proxying with --print-env parameter.
 
 Refer to init.py to import CA certificates.  
 Note: CA certificate import is optional and only required when using as system proxy. It's potentially dangerous - recommended to remove after use.  
