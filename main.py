@@ -36,10 +36,15 @@ if __name__ == '__main__':
     parser.add_argument("--with-history", action="store_true", help="Enable history")
     parser.add_argument("--gradle", action="store_true", help="Set gradle proxies")
     parser.add_argument("--socks5", action="store_true", help="Enable SOCKS5 proxy")
+    parser.add_argument("--print-env", action="store_true", help="Print proxy environment variables")
     args = parser.parse_args()
 
     set_with_cache(args.with_cache)
     set_with_history(args.with_history)
+
+    if args.print_env:
+        print(f"http_proxy={HTTP_PROXY}")
+        print(f"https_proxy={HTTPS_PROXY}")
 
     try:
         if args.gradle:
