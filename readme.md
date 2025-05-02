@@ -6,7 +6,8 @@
 
 通过 --with-cache 参数开启缓存, 默认会对一些特定文件上24小时缓存, 详情见configs.py  
 通过 --with-history 参数开启历史记录, 它会记录流量, 然后默认在关闭时dump到/log  
-通过 --gradle 参数为gradle开启代理, 详细配置见configs.py
+通过 --gradle 参数为gradle开启代理, 详细配置见configs.py  
+通过 --socks5 参数开启socks5代理
 
 参考init.py来导入ca证书  
 注意, ca证书导入是可选项, 当且仅当你想要它作为系统代理的时候才需要使用, 而且它比较危险, 建议使用过后删除  
@@ -14,6 +15,10 @@
 cacerts是你从你的java home/lib/security目录下找到的证书文件，truststore.jks是你自己创建的信任库文件, 给gradle用的  
 记得用gradle对应的java home  
 记得重启你的IDE  
+
+## 相关推荐工具
+[netch](https://github.com/netchx/netch) 强制为特定软件使用socks5代理  
+[dn](https://github.com/franticxx/dn) 多线程下载器(建议大于等于0.1.4版本)  
 
 ```bash
 keytool -importcert -alias do_not_trust_multithread_downloading_proxy_ca -file ca_server.crt -keystore truststore.jks -storepass changeit -noprompt
@@ -30,6 +35,7 @@ It's quite unstable and may cause failures, random 404/500 errors, SSL handshake
 Cache can be enabled with --with-cache parameter. By default it sets 24-hour cache for certain files, see configs.py for details.  
 History can be enabled with --with-history parameter. It records traffic and dumps it to /log when closed.  
 Gradle proxying can be enabled with --gradle parameter. See configs.py for details of configuration.  
+Socks5 proxying can be enabled with --socks5 parameter.  
 
 Refer to init.py to import CA certificates.  
 Note: CA certificate import is optional and only required when using as system proxy. It's potentially dangerous - recommended to remove after use.  
@@ -37,6 +43,10 @@ Note: CA certificate import is optional and only required when using as system p
 cacerts is the certificate file from your java home/lib/security directory. truststore.jks is the truststore file you created for gradle.  
 Make sure to use the java home corresponding to your gradle installation.  
 Don't forget to restart your IDE after configuration.  
+
+## Related tools
+[netch](https://github.com/netchx/netch) Force proxy for specific software
+[dn](https://github.com/franticxx/dn) Multi-thread downloading tool (version >= 0.1.4 is recommended)
 
 ```bash
 keytool -importcert -alias do_not_trust_multithread_downloading_proxy_ca -file ca_server.crt -keystore truststore.jks -storepass changeit -noprompt
