@@ -9,7 +9,7 @@ import yaml
 from utils import logger
 from configs import *
 
-mfc_config = {}
+mfc_config = []
 
 if os.path.exists(MFC_CONFIG_FILE):
     with open(MFC_CONFIG_FILE, "rb") as f:
