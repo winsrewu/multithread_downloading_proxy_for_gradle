@@ -244,8 +244,17 @@ def handle_http(client_socket: socket.socket, url: str, headers: dict, method: s
         time.sleep(10)
         if client_socket.fileno() != -1:
             if is_ssl:
-                client_socket.unwrap()
-            client_socket.close()
+                try:
+                    if hasattr(client_socket, '_sslobj') and client_socket._sslobj is not None:
+                        try:
+                            client_socket.unwrap()
+                        except ssl.SSLError as e:
+                            # Handling situations where the SSL connection is not fully established
+                            logger.warning(f"SSL unwrap error: {e}")
+                            client_socket.close()
+                except Exception as e:
+                    logger.error(f"Error closing SSL connection: {e}")
+                    client_socket.close()
         if server_socket.fileno() != -1:
             server_socket.close()
 

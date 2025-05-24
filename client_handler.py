@@ -57,6 +57,11 @@ def handle_client(client_socket: socket.socket, with_https=False, existing_buf=b
             return
             
         handle_http(client_socket, url, headers, method, with_https, request_raw)
+    except ssl.SSLError as e:
+        if 'shutdown while in init' in str(e).lower():
+            logger.warning("SSL handshake interrupted by client")
+        else:
+            logger.error(f"SSL Error: {e}")
     except Exception as e:
         logger.error(f"Error handling client: {e}")
         log(traceback.format_exc())  # 记录堆栈跟踪
