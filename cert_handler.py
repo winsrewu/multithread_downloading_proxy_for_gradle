@@ -14,13 +14,17 @@ from utils import log
 # Module-level cache with thread-local storage
 _ca_cache = threading.local()
 
+# 添加线程锁
+_ca_lock = threading.Lock()
+
 def _init_ca():
     """Initialize CA certificate and key in cache"""
-    if not hasattr(_ca_cache, 'ca_cert') or not hasattr(_ca_cache, 'ca_key'):
-        if os.path.exists(CERT_FILE) and os.path.exists(KEY_FILE):
-            _load_ca()
-        else:
-            raise RuntimeError("CA certificate not found")
+    with _ca_lock:
+        if not hasattr(_ca_cache, 'ca_cert') or not hasattr(_ca_cache, 'ca_key'):
+            if os.path.exists(CERT_FILE) and os.path.exists(KEY_FILE):
+                _load_ca()
+            else:
+                raise RuntimeError("CA certificate not found")
 
 def _load_ca():
     """Load CA certificate and key from files into cache"""
@@ -67,8 +71,6 @@ def generate_ca():
     if os.path.exists(CERT_FILE) and os.path.exists(KEY_FILE):
         raise RuntimeError("CA certificate already exists")
 
-    # Generate CRL along with CA
-    _generate_crl()
     # Generate private key
     key = rsa.generate_private_key(
         public_exponent=65537,
@@ -104,7 +106,7 @@ def generate_ca():
             data_encipherment=False,
             key_agreement=False,
             key_cert_sign=True,
-            crl_sign=False,
+            crl_sign=True,  # 允许CRL签名
             encipher_only=False,
             decipher_only=False
         ),
@@ -123,8 +125,12 @@ def generate_ca():
         f.write(cert.public_bytes(serialization.Encoding.PEM))
     
     # Update cache
-    _ca_cache.ca_key = key
-    _ca_cache.ca_cert = cert
+    with _ca_lock:
+        _ca_cache.ca_key = key
+        _ca_cache.ca_cert = cert
+
+    # 在CA证书生成后再生成CRL
+    _generate_crl()
 
 def _issue_certificate(base_domain: str, domains: list[str]):
     """Issue a certificate for the given domain using cached CA"""

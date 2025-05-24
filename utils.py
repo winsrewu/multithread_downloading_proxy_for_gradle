@@ -18,6 +18,10 @@ class Logger:
         """记录错误日志"""
         self._console.print(f"[{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}] [{threading.current_thread().name}] [ERROR] {message}", style="bold red")
 
+    def warning(self, message: str):
+        """记录警告日志"""
+        self._console.print(f"[{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}] [{threading.current_thread().name}] [WARNING] {message}", style="bold yellow")
+
 class ProgressBar:
     """进度条管理类"""
     def __init__(self):
